@@ -4,8 +4,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { QRPreview } from "@/components/QRPreview";
 import { NetworkBadge } from "@/components/NetworkBadge";
+import { ContractErrorSurface } from "@/components/ContractErrorSurface";
 import { useApi } from "@/hooks/useApi";
 import { getQuickexApiBase } from "@/lib/api";
+import {
+  NormalizedApiError,
+  QuickExClientError,
+  parseApiErrorResponse,
+} from "@/lib/apiErrors";
 import {
   buildGeneratedLinksCsv,
   BulkCsvDraftRow,
@@ -86,8 +92,10 @@ type ComposeSuccess = {
 
 type ComposeError = {
   success: false;
+  code?: string;
   userMessage?: string;
   error?: string;
+  requestId?: string;
 };
 
 type BulkGenerateSuccess = {
@@ -118,7 +126,7 @@ type BulkLinkRequestItem = {
 export default function Generator() {
   const { t } = useTranslation();
   const apiBase = useMemo(() => getQuickexApiBase(), []);
-  const { error, loading, callApi, data } = useApi<LinkMetadataSuccess>();
+  const { error, errorInfo, loading, callApi, data } = useApi<LinkMetadataSuccess>();
   const csvInputRef = useRef<HTMLInputElement | null>(null);
 
   const [form, setForm] = useState({
@@ -152,6 +160,8 @@ export default function Generator() {
   const [preflightUnavailable, setPreflightUnavailable] = useState<
     string | null
   >(null);
+  const [preflightErrorInfo, setPreflightErrorInfo] =
+    useState<NormalizedApiError | null>(null);
 
   const [errors, setErrors] = useState<ValidationErrors>({});
   const [templates, setTemplates] = useState<InvoiceTemplate[]>(DEFAULT_TEMPLATES);
@@ -417,14 +427,12 @@ export default function Generator() {
           memo: form.memo || undefined,
         }),
       });
-      const json = await res.json();
       if (!res.ok) {
-        const msg =
-          json?.message ??
-          json?.error ??
-          `Request failed (${res.status})`;
-        throw new Error(typeof msg === "string" ? msg : "Request failed");
+        throw new QuickExClientError(
+          await parseApiErrorResponse(res, `Request failed (${res.status})`),
+        );
       }
+      const json = await res.json();
       return json as LinkMetadataSuccess;
     });
   };
@@ -434,49 +442,72 @@ export default function Generator() {
     if (!/^G[A-Z0-9]{55}$/.test(pk)) {
       setPreflightResult({
         success: false,
+        code: "STELLAR_INVALID_ADDRESS",
         userMessage: t('invalidPublicKey'),
+      });
+      setPreflightErrorInfo({
+        code: "STELLAR_INVALID_ADDRESS",
+        message: t('invalidPublicKey'),
       });
       return;
     }
     setPreflightLoading(true);
     setPreflightResult(null);
     setPreflightUnavailable(null);
+    setPreflightErrorInfo(null);
     try {
       const res = await fetch(`${apiBase}/stellar/soroban-preflight`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sourceAccount: pk }),
       });
-      const json = (await res.json()) as ComposeSuccess | ComposeError | {
+      const json = (await res.json().catch(() => null)) as ComposeSuccess | ComposeError | {
         message?: string;
         code?: string;
-      };
-      const message =
-        typeof json === "object" &&
-        json !== null &&
-        "message" in json &&
-        typeof json.message === "string"
-          ? json.message
-          : null;
+        error?: { code?: string; message?: string; request_id?: string };
+      } | null;
       if (res.status === 503) {
-        setPreflightUnavailable(
-          message ?? t('preflightUnavailable'),
+        const normalized = await parseApiErrorResponse(
+          new Response(JSON.stringify(json), { status: res.status }),
+          t('preflightUnavailable'),
         );
+        setPreflightUnavailable(normalized.message);
+        setPreflightErrorInfo(normalized);
         return;
       }
       if (!res.ok) {
+        const normalized = await parseApiErrorResponse(
+          new Response(JSON.stringify(json), { status: res.status }),
+          t('preflightFailed'),
+        );
         setPreflightResult({
           success: false,
-          userMessage: message ?? t('preflightFailed'),
+          code: normalized.code,
+          userMessage: normalized.message,
+          requestId: normalized.requestId,
         });
+        setPreflightErrorInfo(normalized);
         return;
       }
       setPreflightResult(json as ComposeSuccess | ComposeError);
+      if (json && "success" in json && json.success === false) {
+        setPreflightErrorInfo({
+          code: json.code ?? json.error ?? "SIMULATION_FAILED",
+          message: json.userMessage ?? json.error ?? t('simulationFailed'),
+          requestId: json.requestId,
+        });
+      }
     } catch {
+      const normalized = {
+        code: "STELLAR_NETWORK_ERROR",
+        message: t('networkError'),
+      };
       setPreflightResult({
         success: false,
-        userMessage: t('networkError'),
+        code: normalized.code,
+        userMessage: normalized.message,
       });
+      setPreflightErrorInfo(normalized);
     } finally {
       setPreflightLoading(false);
     }
@@ -1259,16 +1290,33 @@ export default function Generator() {
                           : t('runPreflight')}
                       </button>
                       {preflightUnavailable && (
-                        <p role="alert" className="text-amber-400 text-sm">
-                          {preflightUnavailable}
-                        </p>
+                        <ContractErrorSurface
+                          error={
+                            preflightErrorInfo ?? {
+                              code: "CONTRACT_NOT_CONFIGURED",
+                              message: preflightUnavailable,
+                            }
+                          }
+                          compact
+                          onRetry={() => void runPreflight()}
+                        />
                       )}
                       {preflightResult && preflightResult.success === false && (
-                        <p className="text-red-400 text-sm">
-                          {preflightResult.userMessage ??
-                            preflightResult.error ??
-                            t('simulationFailed')}
-                        </p>
+                        <ContractErrorSurface
+                          error={
+                            preflightErrorInfo ?? {
+                              code: preflightResult.code ?? "SIMULATION_FAILED",
+                              message:
+                                preflightResult.userMessage ??
+                                preflightResult.error ??
+                                t('simulationFailed'),
+                              requestId: preflightResult.requestId,
+                            }
+                          }
+                          compact
+                          onRetry={() => void runPreflight()}
+                          retryLabel="Run Preflight Again"
+                        />
                       )}
                       {preflightResult && preflightResult.success === true && (
                         <div className="text-sm text-emerald-400 space-y-1">
@@ -1301,7 +1349,16 @@ export default function Generator() {
               {loading ? "Generating…" : "Generate Payment Link"}
             </button>
             {error && (
-              <p role="alert" className="text-red-400 text-sm text-center">{error}</p>
+              errorInfo ? (
+                <ContractErrorSurface
+                  error={errorInfo}
+                  compact
+                  onRetry={handleSubmit}
+                  retryLabel="Generate Again"
+                />
+              ) : (
+                <p role="alert" className="text-red-400 text-sm text-center">{error}</p>
+              )
             )}
           </div>
 

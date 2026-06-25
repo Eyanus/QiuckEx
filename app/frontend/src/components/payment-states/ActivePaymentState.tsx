@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { SigningSummary } from "@/components/SigningSummary";
+import { ContractErrorSurface } from "@/components/ContractErrorSurface";
+import { NormalizedApiError } from "@/lib/apiErrors";
 import { 
   CheckCircle2, 
   Loader2, 
@@ -64,6 +66,7 @@ export function ActivePaymentState({
   
   const [errorType, setErrorType] = useState<"contract" | "rejection" | "network" | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errorInfo, setErrorInfo] = useState<NormalizedApiError | null>(null);
   const [signedPayload, setSignedPayload] = useState<string | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   
@@ -101,6 +104,7 @@ export function ActivePaymentState({
   const runPipeline = async (startStep: "simulate" | "sign" | "submit") => {
     setErrorType(null);
     setErrorMessage(null);
+    setErrorInfo(null);
     onPaymentInitiated();
 
     if (startStep === "simulate") {
@@ -117,8 +121,12 @@ export function ActivePaymentState({
       if (simulatorOutcome === "fail_simulate") {
         setSimulateStatus("error");
         setErrorType("contract");
-        const err = "Contract Error: Transaction simulation failed. The smart contract returned an error (e.g. insufficient funds, expired path, or invalid preconditions).";
-        setErrorMessage(err);
+        const err = {
+          code: "CONTRACT_INSUFFICIENT_BALANCE",
+          message: "Transaction simulation failed because the source account cannot cover the payment or fees.",
+        };
+        setErrorInfo(err);
+        setErrorMessage(err.message);
         addLog("ERROR: Transaction simulation failed (op_underfunded). Recipient balance is insufficient or swap path is invalid.");
         return;
       }
@@ -138,8 +146,12 @@ export function ActivePaymentState({
       if (simulatorOutcome === "fail_sign") {
         setSignStatus("error");
         setErrorType("rejection");
-        const err = "User Rejection: Signature request denied. The transaction was rejected in your wallet.";
-        setErrorMessage(err);
+        const err = {
+          code: "WALLET_REJECTED",
+          message: "Signature request denied. The transaction was rejected in your wallet.",
+        };
+        setErrorInfo(err);
+        setErrorMessage(err.message);
         addLog("ERROR: User rejected signature request in wallet extension.");
         return;
       }
@@ -166,8 +178,12 @@ export function ActivePaymentState({
       if (simulatorOutcome === "fail_submit") {
         setSubmitStatus("error");
         setErrorType("network");
-        const err = "Network Error: Broadcast timed out or Horizon node was unreachable. You can safely retry without resigning.";
-        setErrorMessage(err);
+        const err = {
+          code: "STELLAR_NETWORK_ERROR",
+          message: "Broadcast timed out or Horizon node was unreachable. You can safely retry without signing again.",
+        };
+        setErrorInfo(err);
+        setErrorMessage(err.message);
         addLog("ERROR: Connection timeout during broadcast to Horizon node.");
         addLog("SAFE TO RETRY: The signed transaction envelope (XDR) is cached. Retrying will not duplicate payment.");
         return;
@@ -222,6 +238,7 @@ export function ActivePaymentState({
     setSubmitStatus("pending");
     setErrorType(null);
     setErrorMessage(null);
+    setErrorInfo(null);
     setSignedPayload(null);
     setLogs([]);
   };
@@ -381,27 +398,26 @@ export function ActivePaymentState({
           </div>
 
           {/* Error Callout */}
-          {errorMessage && (
-            <div className="mb-6 p-4 rounded-2xl bg-red-500/10 border border-red-500/20 animate-in fade-in duration-200">
-              <div className="flex gap-3">
-                <AlertTriangle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
-                <div>
-                  <h4 className="font-bold text-red-400 text-sm">
-                    {errorType === "contract" && "Simulation Contract Failure"}
-                    {errorType === "rejection" && "Wallet Signature Request Rejected"}
-                    {errorType === "network" && "Horizon Network Timeout"}
-                  </h4>
-                  <p className="text-xs text-red-300/90 mt-1 leading-relaxed">
-                    {errorMessage}
-                  </p>
-                  {errorType === "network" && (
-                    <p className="text-[10px] text-indigo-400/90 font-mono mt-2 flex items-center gap-1.5 bg-indigo-500/5 px-2.5 py-1.5 rounded-lg border border-indigo-500/10 w-fit">
-                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-ping" />
-                      Idempotency Active: Retrying will only re-broadcast signed payload.
-                    </p>
-                  )}
-                </div>
-              </div>
+          {errorInfo && (
+            <div className="mb-6 animate-in fade-in duration-200">
+              <ContractErrorSurface
+                error={errorInfo}
+                compact={false}
+                onRetry={handleRetryStep}
+                retryLabel={
+                  errorType === "contract"
+                    ? "Retry Simulation"
+                    : errorType === "rejection"
+                      ? "Try Signing Again"
+                      : "Retry Broadcast"
+                }
+              />
+              {errorType === "network" && (
+                <p className="mt-2 flex w-fit items-center gap-1.5 rounded-lg border border-indigo-500/10 bg-indigo-500/5 px-2.5 py-1.5 font-mono text-[10px] text-indigo-400/90">
+                  <span className="h-1.5 w-1.5 rounded-full bg-indigo-400 animate-ping" />
+                  Idempotency Active: Retrying will only re-broadcast signed payload.
+                </p>
+              )}
             </div>
           )}
 

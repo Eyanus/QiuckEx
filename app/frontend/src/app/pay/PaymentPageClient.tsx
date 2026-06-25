@@ -10,6 +10,12 @@ import { RefundedPaymentState } from "@/components/payment-states/RefundedPaymen
 import { LoadingState } from "@/components/payment-states/LoadingState";
 import { ErrorState } from "@/components/payment-states/ErrorState";
 import { getQuickexApiBase } from "@/lib/api";
+import {
+  NormalizedApiError,
+  QuickExClientError,
+  normalizeUnknownError,
+  parseApiErrorResponse,
+} from "@/lib/apiErrors";
 
 type LinkState = "ACTIVE" | "EXPIRED" | "PAID" | "REFUNDED" | "DRAFT";
 
@@ -45,6 +51,7 @@ function PaymentPageContent() {
   const [fetchState, setFetchState] = useState<FetchState>("loading");
   const [status, setStatus] = useState<PaymentLinkStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [apiError, setApiError] = useState<NormalizedApiError | null>(null);
   const [retryCount, setRetryCount] = useState(0);
 
   const username = searchParams.get("username") || "";
@@ -55,13 +62,19 @@ function PaymentPageContent() {
 
   const fetchStatus = useCallback(async () => {
     if (!username || !amount) {
+      const missingParamsError: NormalizedApiError = {
+        code: "VALIDATION_ERROR",
+        message: "Missing required parameters: username and amount",
+      };
       setFetchState("error");
-      setError("Missing required parameters: username and amount");
+      setError(missingParamsError.message);
+      setApiError(missingParamsError);
       return;
     }
 
     setFetchState("loading");
     setError(null);
+    setApiError(null);
 
     try {
       const apiBase = getQuickexApiBase();
@@ -84,16 +97,18 @@ function PaymentPageContent() {
       );
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => null);
-        throw new Error(
-          errorData?.message ||
+        throw new QuickExClientError(
+          await parseApiErrorResponse(
+            response,
             `Failed to fetch payment status (${response.status})`,
+          ),
         );
       }
 
       const data: PaymentLinkStatus = await response.json();
       setStatus(data);
       setFetchState("success");
+      setApiError(null);
 
       // Track analytics event
       trackAnalyticsEvent("payment_link_viewed", {
@@ -103,15 +118,19 @@ function PaymentPageContent() {
         state: data.state,
       });
     } catch (err) {
+      const normalized = normalizeUnknownError(err, "Unknown error occurred");
       setFetchState("error");
-      setError(err instanceof Error ? err.message : "Unknown error occurred");
+      setError(normalized.message);
+      setApiError(normalized);
 
       // Track error analytics
       trackAnalyticsEvent("payment_link_error", {
         username,
         amount,
         asset,
-        error: err instanceof Error ? err.message : "Unknown error",
+        error: normalized.message,
+        code: normalized.code,
+        requestId: normalized.requestId,
       });
     }
   }, [username, amount, asset, memo, acceptedAssets]);
@@ -176,6 +195,7 @@ function PaymentPageContent() {
         <NetworkBadge />
         <ErrorState
           message={error || "Failed to load payment link"}
+          error={apiError}
           onRetry={handleRetry}
           retryCount={retryCount}
         />
@@ -189,6 +209,7 @@ function PaymentPageContent() {
         <NetworkBadge />
         <ErrorState
           message="Payment link data is unavailable"
+          error={apiError}
           onRetry={handleRetry}
           retryCount={retryCount}
         />
@@ -216,6 +237,10 @@ function PaymentPageContent() {
         return (
           <ErrorState
             message={`Unknown payment state: ${status.state}`}
+            error={{
+              code: "UNKNOWN_PAYMENT_STATE",
+              message: `Unknown payment state: ${status.state}`,
+            }}
             onRetry={handleRetry}
             retryCount={retryCount}
           />

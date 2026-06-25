@@ -1,15 +1,42 @@
 "use client";
 
 import Link from "next/link";
+import { ContractErrorSurface } from "@/components/ContractErrorSurface";
+import { NormalizedApiError } from "@/lib/apiErrors";
+import { isContractLikeErrorCode } from "@/lib/contractErrors";
 
 interface ErrorStateProps {
-  message: string;
+  message?: string;
+  error?: NormalizedApiError | null;
   onRetry: () => void;
   retryCount: number;
 }
 
-export function ErrorState({ message, onRetry, retryCount }: ErrorStateProps) {
+export function ErrorState({ message, error, onRetry, retryCount }: ErrorStateProps) {
   const isMultipleFailures = retryCount >= 2;
+  const displayMessage = message ?? error?.message ?? "Something went wrong.";
+
+  if (error && isContractLikeErrorCode(error.code)) {
+    return (
+      <div className="flex min-h-[60vh] flex-col items-center justify-center px-4">
+        <div className="w-full max-w-xl">
+          <ContractErrorSurface
+            error={error}
+            onRetry={onRetry}
+            retryLabel={retryCount === 0 ? "Try Again" : `Retry (Attempt ${retryCount + 1})`}
+          />
+          <div className="mt-6 flex justify-center">
+            <Link
+              href="/"
+              className="rounded-xl bg-neutral-800 px-6 py-3 font-semibold transition-colors hover:bg-neutral-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300 focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+            >
+              Go Home
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -38,7 +65,7 @@ export function ErrorState({ message, onRetry, retryCount }: ErrorStateProps) {
       </div>
 
       <h2 className="text-2xl font-bold mb-4">Unable to Load Payment</h2>
-      <p className="text-neutral-300 text-center max-w-md mb-8">{message}</p>
+      <p className="text-neutral-300 text-center max-w-md mb-8">{displayMessage}</p>
 
       {isMultipleFailures && (
         <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-4 mb-8 max-w-md">

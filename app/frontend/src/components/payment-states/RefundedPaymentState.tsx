@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import { ContractErrorSurface } from "@/components/ContractErrorSurface";
+import { NormalizedApiError } from "@/lib/apiErrors";
 
 interface PaymentLinkStatus {
   username: string;
@@ -14,9 +16,12 @@ interface PaymentLinkStatus {
 
 interface RefundedPaymentStateProps {
   status: PaymentLinkStatus;
+  refundError?: NormalizedApiError | null;
+  onRefundRetry?: () => void;
+  onRefundDismiss?: () => void;
 }
 
-export function RefundedPaymentState({ status }: RefundedPaymentStateProps) {
+export function RefundedPaymentState({ status, refundError, onRefundRetry, onRefundDismiss }: RefundedPaymentStateProps) {
   return (
     <div className="space-y-8">
       {/* Header */}
@@ -43,6 +48,16 @@ export function RefundedPaymentState({ status }: RefundedPaymentStateProps) {
         <h1 className="text-3xl font-bold mb-2">Payment Refunded</h1>
         <p className="text-neutral-300">{status.userMessage}</p>
       </div>
+
+      {/* Refund Error Surface */}
+      {refundError && (
+        <ContractErrorSurface
+          error={refundError}
+          onRetry={onRefundRetry}
+          onDismiss={onRefundDismiss}
+          compact
+        />
+      )}
 
       {/* Payment Details Card */}
       <div className="bg-neutral-900/50 border border-white/10 rounded-2xl p-8">
