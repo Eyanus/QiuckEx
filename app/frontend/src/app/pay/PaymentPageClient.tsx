@@ -182,7 +182,7 @@ function PaymentPageContent() {
 
   if (fetchState === "loading") {
     return (
-      <div className="min-h-screen bg-black text-white">
+      <div className="min-h-screen bg-background text-foreground">
         <NetworkBadge />
         <LoadingState />
       </div>
@@ -191,7 +191,7 @@ function PaymentPageContent() {
 
   if (fetchState === "error") {
     return (
-      <div className="min-h-screen bg-black text-white">
+      <div className="min-h-screen bg-background text-foreground">
         <NetworkBadge />
         <ErrorState
           message={error || "Failed to load payment link"}
@@ -205,7 +205,7 @@ function PaymentPageContent() {
 
   if (!status) {
     return (
-      <div className="min-h-screen bg-black text-white">
+      <div className="min-h-screen bg-background text-foreground">
         <NetworkBadge />
         <ErrorState
           message="Payment link data is unavailable"
@@ -249,7 +249,7 @@ function PaymentPageContent() {
   };
 
   return (
-    <div className="min-h-screen bg-black text-white">
+    <div className="min-h-screen bg-background text-foreground">
       <NetworkBadge />
       <main className="container mx-auto px-4 py-12 max-w-2xl">
         {renderStateComponent()}
@@ -268,7 +268,7 @@ export default function PaymentPageClient() {
 
 function LoadingFallback() {
   return (
-    <div className="min-h-screen bg-black text-white">
+    <div className="min-h-screen bg-background text-foreground">
       <NetworkBadge />
       <LoadingState />
     </div>
